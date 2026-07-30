@@ -16,7 +16,7 @@ claim-to-role mapping — then hands busbar a `Principal` it can bind to
 virtual keys and roles.
 
 It is a `cdylib` that implements busbar's `AuthModule` trait (via
-[`busbar-plugin-sdk`](https://github.com/GetBusbar/busbarAI/tree/main/crates/plugin-sdk))
+[`busbar-plugin-sdk`](https://github.com/GetBusbar/busbar/tree/main/crates/plugin-sdk))
 and is loaded in-process by busbar over the signed hybrid plugin ABI —
 `dlopen`'d, not spawned as a separate process.
 
@@ -30,11 +30,12 @@ explicitly in production; do not assume they move together.
 
 ## What it is for
 
-- **Verifying who's calling**: point `auth.modules.oidc.config` at an
-  IdP (Entra ID, Okta, Auth0, Keycloak, or any standards-compliant OIDC
-  provider) and add `oidc` to `auth.chain`. Every request's bearer token
-  is verified against the IdP's live JWKS — the plugin never trusts an
-  unsigned claim.
+- **Verifying who's calling**: add `oidc` to `auth.chain` with its
+  `settings:` pointed at an IdP (Entra ID, Okta, Auth0, Keycloak, or any
+  standards-compliant OIDC provider) — `auth: { chain: [{ oidc: {
+  settings: {...} } }] }`. Every request's bearer token is verified
+  against the IdP's live JWKS — the plugin never trusts an unsigned
+  claim.
 - **Mapping claims to busbar identity**: the configured role claim (e.g.
   `groups`) becomes the `Principal`'s roles, which busbar's virtual-key
   and policy layer can then gate on — so an operator's existing IdP
@@ -59,7 +60,7 @@ the first request.
 ## Build
 
 Needs a Rust toolchain ([rustup](https://rustup.rs)), and — interim,
-until [busbarAI](https://github.com/GetBusbar/busbarAI) ships publicly —
+until [busbarAI](https://github.com/GetBusbar/busbar) ships publicly —
 a sibling checkout of `busbarAI` at `../busbarAI` (see
 [Dependencies](#dependencies) below).
 
@@ -75,7 +76,7 @@ cargo fmt --all -- --check
 This crate depends on `busbar-api`, `busbar-plugin-sdk`, and
 `busbar-auth-oidc` (and, as dev-dependencies for the end-to-end test,
 `busbar-plugin-loader` and `busbar-plugin-abi`) from the
-[busbarAI](https://github.com/GetBusbar/busbarAI) monorepo. Because
+[busbarAI](https://github.com/GetBusbar/busbar) monorepo. Because
 busbarAI is not yet public, `Cargo.toml` points at these as **local path
 dependencies** (`../busbarAI/crates/...`), which means this repo expects
 to be checked out as a sibling of `busbarAI`:
@@ -94,7 +95,7 @@ become git (pinned rev/tag) or crates.io dependencies instead. Grep
 
 Once built, the cdylib is packed and signed like any other busbar plugin
 — see
-[`docs/plugins.md`](https://github.com/GetBusbar/busbarAI/blob/main/docs/plugins.md#signing-and-packaging)
+[`docs/plugins.md`](https://github.com/GetBusbar/busbar/blob/main/docs/plugins.md#signing-and-packaging)
 in busbarAI for the full reference. In short:
 
 ```sh
@@ -111,10 +112,20 @@ For local development without a signing key, `busbar-plugin-pack pack
 `plugins.trust.allow_unsigned: true`.
 
 Drop the resulting tarball into busbar's configured `plugins.dir` and
-reference it as an auth module — see
-[`docs/plugins.md`](https://github.com/GetBusbar/busbarAI/blob/main/docs/plugins.md#auth-plugins-kind-auth)
-for the `auth:` wiring (`kind: auth`, `auth.chain: [oidc]`,
-`auth.modules.oidc.config: {...}`).
+set:
+
+```yaml
+auth:
+  chain:
+    - oidc:
+        settings:
+          issuer: "https://login.microsoftonline.com/<tenant-id>/v2.0"
+          audience: "<client-id>"
+          role_claim: groups
+```
+
+— see [`docs/configuration.md`](https://github.com/GetBusbar/busbar/blob/main/docs/configuration.md#auth-plugins)
+for the full `auth.chain` config reference.
 
 ## Config
 
