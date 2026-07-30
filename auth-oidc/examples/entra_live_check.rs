@@ -15,8 +15,8 @@
 //!
 //! Run: `cargo run -p busbar-auth-oidc --example entra_live_check`
 
-use busbar_auth_oidc::{resolve_jwks_url, OidcConfig, OidcModule, ReqwestFetcher};
 use busbar_api::AuthModule;
+use busbar_auth_oidc::{resolve_jwks_url, OidcConfig, OidcModule, ReqwestFetcher};
 use std::time::Duration;
 
 fn env_or_skip(key: &str) -> Option<String> {
@@ -52,8 +52,11 @@ fn main() {
         .expect("real POST to Entra's real token endpoint");
 
     let status = resp.status();
-    let text = resp.text().expect("Entra's token response body is readable");
-    let body: serde_json::Value = serde_json::from_str(&text).expect("Entra's token response is JSON");
+    let text = resp
+        .text()
+        .expect("Entra's token response body is readable");
+    let body: serde_json::Value =
+        serde_json::from_str(&text).expect("Entra's token response is JSON");
     assert!(
         status.is_success(),
         "Entra rejected the real password grant ({status}): {body}. If this is \
@@ -96,7 +99,10 @@ fn main() {
     };
     let mut tampered_sig = sig.into_bytes();
     tampered_sig[0] = if tampered_sig[0] != b'A' { b'A' } else { b'B' };
-    let tampered = format!("{header}.{payload}.{}", String::from_utf8(tampered_sig).unwrap());
+    let tampered = format!(
+        "{header}.{payload}.{}",
+        String::from_utf8(tampered_sig).unwrap()
+    );
 
     let fetcher2 = ReqwestFetcher::new(Duration::from_secs(10), None).unwrap();
     let module2 = OidcModule::new(&cfg, jwks_url, Box::new(fetcher2));
