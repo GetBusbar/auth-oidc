@@ -1,0 +1,151 @@
+# auth-oidc
+
+**v1.5.0.** The first-party, signed `kind: auth` plugin for
+[busbar](https://getbusbar.com): verifies a caller's identity by checking
+a bearer JWT against an OpenID Connect identity provider's JWKS — real
+signature verification (ES256 on [`ring`](https://github.com/briansmith/ring),
+no `jsonwebtoken`/`rsa`), issuer/audience/expiry/not-before checks, and a
+claim-to-role mapping — then hands busbar a `Principal` it can bind to
+virtual keys and roles.
+
+It is a `cdylib` that implements busbar's `AuthModule` trait (via
+[`busbar-plugin-sdk`](https://github.com/GetBusbar/busbarAI/tree/main/crates/plugin-sdk))
+and is loaded in-process by busbar over the signed hybrid plugin ABI —
+`dlopen`'d, not spawned as a separate process.
+
+## What it is for
+
+- **Verifying who's calling**: point `auth.modules.oidc.config` at an
+  IdP (Entra ID, Okta, Auth0, Keycloak, or any standards-compliant OIDC
+  provider) and add `oidc` to `auth.chain`. Every request's bearer token
+  is verified against the IdP's live JWKS — the plugin never trusts an
+  unsigned claim.
+- **Mapping claims to busbar identity**: the configured role claim (e.g.
+  `groups`) becomes the `Principal`'s roles, which busbar's virtual-key
+  and policy layer can then gate on — so an operator's existing IdP
+  groups drive busbar access without a second identity system.
+
+## Design
+
+This repo is a thin adapter (`src/lib.rs`, ~60 lines): it turns the
+engine's JSON config into a real `OidcModule` and hands the trait object
+to the SDK, which emits the five extern-C symbols the loader resolves.
+All the actual OIDC logic — JWKS fetch/cache, JWT verification, claim
+policy — lives in the `busbar-auth-oidc` library crate this plugin wraps
+(a sibling crate in the `busbarAI` monorepo; see
+[Dependencies](#dependencies) below), so a custom build can also link
+that logic statically instead of going through the plugin ABI.
+
+`jwks_url` in the config is optional: when omitted, it is resolved once
+at `open()` via the issuer's OIDC discovery document, so boot fails
+loudly if discovery can't find it rather than deferring the failure to
+the first request.
+
+## Build
+
+Needs a Rust toolchain ([rustup](https://rustup.rs)), and — interim,
+until [busbarAI](https://github.com/GetBusbar/busbarAI) ships publicly —
+a sibling checkout of `busbarAI` at `../busbarAI` (see
+[Dependencies](#dependencies) below).
+
+```sh
+cargo build --release      # cdylib: target/release/libbusbar_auth_oidc_plugin.{so,dylib}
+cargo test                 # unit tests + the end-to-end loader/JWKS/JWT test (see tests/e2e.rs)
+cargo clippy --all-targets -- -D warnings
+cargo fmt --all -- --check
+```
+
+## Dependencies
+
+This crate depends on `busbar-api`, `busbar-plugin-sdk`, and
+`busbar-auth-oidc` (and, as dev-dependencies for the end-to-end test,
+`busbar-plugin-loader` and `busbar-plugin-abi`) from the
+[busbarAI](https://github.com/GetBusbar/busbarAI) monorepo. Because
+busbarAI is not yet public, `Cargo.toml` points at these as **local path
+dependencies** (`../busbarAI/crates/...`), which means this repo expects
+to be checked out as a sibling of `busbarAI`:
+
+```
+some-parent-dir/
+├── busbarAI/
+└── auth-oidc/
+```
+
+This is an interim measure — once busbarAI ships publicly, these should
+become git (pinned rev/tag) or crates.io dependencies instead. Grep
+`Cargo.toml` for the `INTERIM` comments when doing that migration.
+
+## Pack and sign
+
+Once built, the cdylib is packed and signed like any other busbar plugin
+— see
+[`docs/plugins.md`](https://github.com/GetBusbar/busbarAI/blob/main/docs/plugins.md#signing-and-packaging)
+in busbarAI for the full reference. In short:
+
+```sh
+BUSBAR_SIGN_KEY=<signing key> busbar-plugin-pack pack \
+    --lib target/release/libbusbar_auth_oidc_plugin.so \
+    --name busbar-auth-oidc-plugin --alias oidc --kind auth \
+    --version 1.5.0 --publisher busbar \
+    --license Apache-2.0 \
+    --out busbar-auth-oidc-plugin-1.5.0-x86_64-linux.tar.gz
+```
+
+For local development without a signing key, `busbar-plugin-pack pack
+--allow-unsigned` produces a tarball busbar loads only under
+`plugins.trust.allow_unsigned: true`.
+
+Drop the resulting tarball into busbar's configured `plugins.dir` and
+reference it as an auth module — see
+[`docs/plugins.md`](https://github.com/GetBusbar/busbarAI/blob/main/docs/plugins.md#auth-plugins-kind-auth)
+for the `auth:` wiring (`kind: auth`, `auth.chain: [oidc]`,
+`auth.modules.oidc.config: {...}`).
+
+## Config
+
+| Setting | Required | Default | Notes |
+|---|---|---|---|
+| `issuer` | yes | — | The IdP's OIDC issuer URL. Checked against the JWT's `iss` claim. |
+| `audience` | yes | — | The expected `aud` claim (busbar's registered client/resource identifier at the IdP). |
+| `jwks_url` | no | discovered from `issuer` | The IdP's JWKS endpoint. When omitted, resolved once at `open()` via OIDC discovery (`<issuer>/.well-known/openid-configuration`). |
+| `role_claim` | no | — | The claim (e.g. `groups`) mapped onto the resulting `Principal`'s roles. |
+| `ca_cert_pem` | no | — | An extra root CA (PEM) to trust for the JWKS/discovery HTTPS fetch, in addition to the system trust store — for a private CA or a test fixture (this is exactly what `tests/e2e.rs` uses to trust its own self-signed local JWKS server). |
+
+Unknown config fields are rejected (`deny_unknown_fields`) — a typo'd or
+stray key fails loudly at boot instead of being silently ignored.
+
+## Tests
+
+`cargo test` runs both this crate's own hermetic unit tests (`src/lib.rs`
+— covering `open()`'s config-parsing responsibility: empty/malformed/
+missing-required-field/unknown-field config, and the "explicit
+`jwks_url` skips discovery" and "malformed issuer fails fast" paths, all
+without any network I/O) and the end-to-end test in `tests/e2e.rs`.
+
+The end-to-end test is NOT a stub: it stands up a genuine local HTTPS
+JWKS server (a real self-signed certificate minted with `rcgen`, served
+over a real `rustls` TLS listener on `127.0.0.1`), mints a real
+ES256-signed JWT with `ring`, and `dlopen`s the actually-built
+`busbar-auth-oidc-plugin` cdylib over `busbar-plugin-loader`'s real
+`kind: auth` C ABI seam — the same seam busbar's engine uses. It proves,
+entirely offline (no external IdP, no Docker service):
+
+- a genuine JWKS fetch over real TLS, trusted via the plugin's own
+  `ca_cert_pem` config field;
+- genuine ES256 signature verification (a token signed by the fixture's
+  key is accepted and its claims mapped to a `Principal`; a token signed
+  by a *different* key with the same `kid` is rejected);
+- the full claim → `Principal` mapping (`sub`/`preferred_username`/
+  `name`/the configured role claim) survives the round trip across the
+  real C ABI, not just in-process Rust calls;
+- a load-time config error (empty config, or config missing a required
+  field) surfaces back across the ABI as a clean `Err`, never a panic or
+  a silently-succeeded load.
+
+Build under `cargo test --workspace`-equivalent (i.e. a normal `cargo
+build` first, or just `cargo test`, which builds the cdylib as part of
+the test run) so the e2e test finds the library; it self-skips with a
+message if the cdylib isn't present locally, but hard-fails under CI
+(`CI` env var set) instead of silently skipping — this is the only
+over-the-ABI coverage of the `kind: auth` dlopen seam and must never
+quietly vanish.
