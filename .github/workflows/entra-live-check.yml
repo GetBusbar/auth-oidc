@@ -1,0 +1,38 @@
+# Real-world proof against an actual Entra ID (Azure AD) tenant, not a fixture or a mock. Runs
+# auth-oidc/examples/entra_live_check.rs, which performs a genuine password-grant token request
+# against a disposable test tenant + test user (both provisioned as repo secrets — never a real
+# employee identity), then drives that real Entra-issued token through this crate's own
+# OidcModule/ReqwestFetcher: real discovery document, real JWKS fetch, real RS256 signature check,
+# real claim validation, plus a tamper check confirming a corrupted signature is genuinely rejected.
+#
+# This complements, not replaces, the hermetic dlopen ABI tests in ci.yml (plugin-ci.yml) — those
+# prove the ABI seam and the crypto path work at all, with no external dependency; this proves the
+# code actually interoperates with a real-world IdP's real quirks (issuer format, token shape,
+# claims) rather than only a synthetic fixture.
+#
+# Runs on push to main and on demand. Not on pull_request — forked PRs don't have access to repo
+# secrets, and the example already exits cleanly (SKIP, not fail) if the ENTRA_* secrets are absent,
+# so this only ever runs where the tenant is actually provisioned.
+name: entra-live-check
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  entra-live-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Real Entra ID token verification
+        working-directory: auth-oidc
+        env:
+          ENTRA_TENANT_ID: ${{ secrets.ENTRA_TENANT_ID }}
+          ENTRA_CLIENT_ID: ${{ secrets.ENTRA_CLIENT_ID }}
+          ENTRA_TEST_USERNAME: ${{ secrets.ENTRA_TEST_USERNAME }}
+          ENTRA_TEST_PASSWORD: ${{ secrets.ENTRA_TEST_PASSWORD }}
+        run: cargo run --example entra_live_check
