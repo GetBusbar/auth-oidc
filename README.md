@@ -1,6 +1,13 @@
 # auth-oidc
 
-**v1.5.0.** The first-party, signed `kind: auth` plugin for
+**This plugin's version: v1.0.0.** (Independently versioned from busbar
+itself — see [Versioning](#versioning) below.)
+
+[![CI](https://github.com/GetBusbar/auth-oidc/actions/workflows/ci.yml/badge.svg)](https://github.com/GetBusbar/auth-oidc/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/GetBusbar/auth-oidc)](https://github.com/GetBusbar/auth-oidc/releases)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
+The first-party, signed `kind: auth` plugin for
 [busbar](https://getbusbar.com): verifies a caller's identity by checking
 a bearer JWT against an OpenID Connect identity provider's JWKS — real
 signature verification (ES256 on [`ring`](https://github.com/briansmith/ring),
@@ -12,6 +19,14 @@ It is a `cdylib` that implements busbar's `AuthModule` trait (via
 [`busbar-plugin-sdk`](https://github.com/GetBusbar/busbarAI/tree/main/crates/plugin-sdk))
 and is loaded in-process by busbar over the signed hybrid plugin ABI —
 `dlopen`'d, not spawned as a separate process.
+
+## Versioning
+
+This plugin is versioned **independently of busbar** — `v1.0.0` here says
+nothing about which busbar release it is. Compatibility with busbar is
+stated separately: **requires busbar 1.5.0+** (the release that ships the
+signed hybrid plugin ABI this crate loads over). Pin both versions
+explicitly in production; do not assume they move together.
 
 ## What it is for
 
@@ -86,9 +101,9 @@ in busbarAI for the full reference. In short:
 BUSBAR_SIGN_KEY=<signing key> busbar-plugin-pack pack \
     --lib target/release/libbusbar_auth_oidc_plugin.so \
     --name busbar-auth-oidc-plugin --alias oidc --kind auth \
-    --version 1.5.0 --publisher busbar \
+    --version 1.0.0 --publisher busbar \
     --license Apache-2.0 \
-    --out busbar-auth-oidc-plugin-1.5.0-x86_64-linux.tar.gz
+    --out busbar-auth-oidc-plugin-1.0.0-x86_64-linux.tar.gz
 ```
 
 For local development without a signing key, `busbar-plugin-pack pack
@@ -149,3 +164,10 @@ message if the cdylib isn't present locally, but hard-fails under CI
 (`CI` env var set) instead of silently skipping — this is the only
 over-the-ABI coverage of the `kind: auth` dlopen seam and must never
 quietly vanish.
+
+## License
+
+Licensed **Apache-2.0** ([LICENSE](LICENSE)). Contributions welcome — see
+[CONTRIBUTING.md](CONTRIBUTING.md). Governed by our
+[Code of Conduct](CODE_OF_CONDUCT.md); security issues go through
+[SECURITY.md](SECURITY.md), not public issues.
