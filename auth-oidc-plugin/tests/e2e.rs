@@ -22,9 +22,9 @@ use busbar_plugin_loader::{auth::load_auth_from_bytes, plugin_library_filename};
 /// Checks BOTH the "uplifted" `<profile_dir>/<name>` copy (only refreshed when `[lib]` is a ROOT
 /// build target, e.g. `cargo build --all-targets`) and the raw `<profile_dir>/deps/<name>` compiler
 /// output (refreshed on every build that recompiles the lib). A bare `cargo test --release` (what
-/// `release-check.sh`'s Phase 4 runs, and what cargo-mutants runs) does NOT uplift the cdylib to
-/// the top-level profile dir, only to `target/deps` — checking only `profile_dir` silently finds
-/// nothing even though the cdylib really was built. Same fix already applied to
+/// `release-check.sh`'s Phase 4 runs) does NOT uplift the cdylib to the top-level profile dir, only
+/// to `target/deps` - checking only `profile_dir` silently finds nothing even though the cdylib
+/// really was built. Same fix already applied to
 /// store-postgres-plugin's and webrequest-hook's equivalent `plugin_path()` helpers.
 fn plugin_path() -> Option<std::path::PathBuf> {
     let candidate = (|| {
@@ -346,7 +346,7 @@ fn wait_for_admin_ready(
     false
 }
 
-/// THE REAL END-TO-END PROOF Matthew asked for by name: "we called oidc... for EVERY plugin." Not a
+/// THE REAL END-TO-END PROOF that oidc is exercised the way an operator exercises it. Not a
 /// direct ABI `load_auth_from_bytes` call (the tests above already cover that seam) and not a
 /// file-drop — an operator installing a NEW auth plugin onto a LIVE gateway does it over the real
 /// Admin API (`POST /api/v1/admin/plugins`), then the auth chain picks it up on the next boot (auth
