@@ -39,15 +39,26 @@ fn main() {
 
     let token_endpoint = format!("https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token");
     let http = reqwest::blocking::Client::new();
+    // A PUBLIC client sends no secret; a CONFIDENTIAL one must. Which of the two an app
+    // registration is depends on its "Allow public client flows" setting, and flipping that setting
+    // in the portal changes what this request has to look like — Entra rejects the mismatch with
+    // AADSTS7000218 rather than anything that names the setting. Sending the secret only when one
+    // is provisioned lets the same code cover both, so the check does not have to be edited every
+    // time the tenant is reconfigured.
+    let client_secret = env_or_skip("ENTRA_CLIENT_SECRET");
+    let mut form = vec![
+        ("grant_type", "password"),
+        ("client_id", client_id.as_str()),
+        ("username", username.as_str()),
+        ("password", password.as_str()),
+        ("scope", "openid profile email"),
+    ];
+    if let Some(secret) = client_secret.as_deref() {
+        form.push(("client_secret", secret));
+    }
     let resp = http
         .post(&token_endpoint)
-        .form(&[
-            ("grant_type", "password"),
-            ("client_id", &client_id),
-            ("username", &username),
-            ("password", &password),
-            ("scope", "openid profile email"),
-        ])
+        .form(&form)
         .send()
         .expect("real POST to Entra's real token endpoint");
 
@@ -61,7 +72,11 @@ fn main() {
         status.is_success(),
         "Entra rejected the real password grant ({status}): {body}. If this is \
          AADSTS50055 (password expired), sign in interactively once as the test user to set a \
-         permanent password, then re-provision the ENTRA_TEST_PASSWORD secret."
+         permanent password, then re-provision the ENTRA_TEST_PASSWORD secret. If it is \
+         AADSTS7000218 ('the request body must contain client_assertion or client_secret'), the \
+         app registration is being treated as a CONFIDENTIAL client: either re-enable 'Allow \
+         public client flows' on it, or provision an ENTRA_CLIENT_SECRET repo secret, which this \
+         check will then send."
     );
     let id_token = body["id_token"]
         .as_str()
