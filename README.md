@@ -30,10 +30,12 @@ explicitly in production; do not assume they move together.
 
 ## What it is for
 
-- **Verifying who's calling**: add `oidc` to `auth.chain` with its
-  `settings:` pointed at an IdP (Entra ID, Okta, Auth0, Keycloak, or any
-  standards-compliant OIDC provider) — `auth: { chain: [{ oidc: {
-  settings: {...} } }] }`. Every request's bearer token is verified
+- **Verifying who's calling**: define the provider once under
+  `identity-providers:` with its `settings:` pointed at an IdP (Entra ID,
+  Okta, Auth0, Keycloak, or any standards-compliant OIDC provider), then
+  reference it by bare name from `auth.chain` — `identity-providers: {
+  oidc: { module: oidc, settings: {...} } }` + `auth: { chain: [oidc] }`.
+  Every request's bearer token is verified
   against the IdP's live JWKS — the plugin never trusts an unsigned
   claim.
 - **Mapping claims to busbar identity**: the configured role claim (e.g.
@@ -128,17 +130,28 @@ Drop the resulting tarball into busbar's configured `plugins.dir` and
 set:
 
 ```yaml
+identity-providers:            # define each IdP ONCE (busbar 1.5.3)
+  oidc:
+    module: oidc               # this plugin, by its packed alias
+    settings:
+      issuer: "https://login.microsoftonline.com/<tenant-id>/v2.0"
+      audience: "<client-id>"
+      role_claim: groups
+    # max_admin_scope: read-only | full — OMITTED means read-only, the
+    # most restrictive ceiling, which is what an external IdP wants.
 auth:
-  chain:
-    - oidc:
-        settings:
-          issuer: "https://login.microsoftonline.com/<tenant-id>/v2.0"
-          audience: "<client-id>"
-          role_claim: groups
+  chain: [oidc]                # reference the provider by BARE NAME
+  role_bindings:               # role → policy, nested by provider name
+    oidc:
+      "<idp-group>": { group: engineering }
 ```
 
-— see [`docs/configuration.md`](https://github.com/GetBusbar/busbar/blob/main/docs/configuration.md#auth-plugins)
-for the full `auth.chain` config reference.
+busbar 1.5.3 retired the inline form (`auth.chain: [{ oidc: { settings:
+… } }]`, `auth.methods:`, `auth.modules:`) and refuses to boot on a
+config that still uses it; `busbar --migrate-config config.yaml` rewrites
+an older config into the shape above. See
+[`docs/configuration.md`](https://github.com/GetBusbar/busbar/blob/main/docs/configuration.md#auth-plugins)
+for the full `identity-providers:` / `auth.chain` config reference.
 
 ## Config
 

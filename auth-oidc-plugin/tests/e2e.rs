@@ -320,16 +320,79 @@ fn free_port() -> u16 {
         .port()
 }
 
+/// A spawned `busbar` whose stdout and stderr are CAPTURED rather than discarded.
+///
+/// The previous harness spawned every boot with `Stdio::null()`, so when busbar refused to boot the
+/// only evidence that reached the test log was `exit status: 1` — the actual reason (a config error
+/// printed on stderr milliseconds before exit) was thrown on the floor, turning a one-line diagnosis
+/// into an hour of guesswork. Both streams are drained on background threads instead of read at
+/// panic time because a pipe holds only a page or two: leaving it unread would block the child once
+/// it filled, deadlocking the very boot the test is waiting on.
+struct CapturedChild {
+    child: std::process::Child,
+    output: std::sync::Arc<std::sync::Mutex<String>>,
+}
+
+impl CapturedChild {
+    /// Spawn `cmd` with both streams piped and drained. `what` names the boot in the panic message
+    /// raised when the spawn itself fails.
+    fn spawn(cmd: &mut std::process::Command, what: &str) -> Self {
+        let mut child = cmd
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap_or_else(|e| panic!("spawn {what}: {e}"));
+        let output = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let streams: [Box<dyn std::io::Read + Send>; 2] = [
+            Box::new(child.stdout.take().expect("stdout was piped")),
+            Box::new(child.stderr.take().expect("stderr was piped")),
+        ];
+        // Interleaving both streams into one buffer matches how an operator reads a terminal, and
+        // ordering between them is not something any assertion here depends on.
+        for stream in streams {
+            let output = std::sync::Arc::clone(&output);
+            std::thread::spawn(move || {
+                use std::io::BufRead;
+                let mut reader = std::io::BufReader::new(stream);
+                let mut line = String::new();
+                while reader.read_line(&mut line).unwrap_or(0) > 0 {
+                    output.lock().expect("output buffer").push_str(&line);
+                    line.clear();
+                }
+            });
+        }
+        Self { child, output }
+    }
+
+    /// Everything busbar has printed so far, for embedding in a failure message.
+    fn output(&self) -> String {
+        self.output.lock().expect("output buffer").clone()
+    }
+
+    fn kill(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
 /// Poll the admin API's `GET /api/v1/admin/plugins` until it answers (or the child exits early).
+/// Either failure mode reports what busbar actually said — see `CapturedChild`'s doc comment.
 fn wait_for_admin_ready(
     client: &reqwest::blocking::Client,
     admin_addr: &str,
     admin_token: &str,
-    child: &mut std::process::Child,
+    child: &mut CapturedChild,
 ) -> bool {
     for _ in 0..150 {
-        if let Ok(Some(status)) = child.try_wait() {
-            panic!("busbar exited early during admin-readiness poll: {status}");
+        if let Ok(Some(status)) = child.child.try_wait() {
+            // The drain threads may still be flushing the final lines the process wrote on its way
+            // out; a short settle beats reporting an empty reason for an early exit.
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            panic!(
+                "busbar exited early during admin-readiness poll: {status}\n\
+                 ---- busbar stdout+stderr ----\n{}\n------------------------------",
+                child.output()
+            );
         }
         if client
             .get(format!(
@@ -416,19 +479,19 @@ fn install_oidc_plugin_via_admin_api_and_authenticate() {
     .unwrap();
     let admin_addr1 = format!("127.0.0.1:{admin_port1}");
 
-    let mut child1 = std::process::Command::new(&busbar_bin)
-        .env("BUSBAR_CONFIG", &config1)
-        .env("BUSBAR_PROVIDERS", &providers)
-        .env("BUSBAR_ADMIN_TOKEN", ADMIN_TOKEN)
-        .env("MOCK_KEY", "unused-mock-provider-key")
-        .env("BUSBAR_STATE_FILE", "")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .expect("spawn boot 1 (empty auth chain, admin listener up)");
+    let mut child1 = CapturedChild::spawn(
+        std::process::Command::new(&busbar_bin)
+            .env("BUSBAR_CONFIG", &config1)
+            .env("BUSBAR_PROVIDERS", &providers)
+            .env("BUSBAR_ADMIN_TOKEN", ADMIN_TOKEN)
+            .env("MOCK_KEY", "unused-mock-provider-key")
+            .env("BUSBAR_STATE_FILE", ""),
+        "boot 1 (empty auth chain, admin listener up)",
+    );
     assert!(
         wait_for_admin_ready(&client, &admin_addr1, ADMIN_TOKEN, &mut child1),
-        "boot 1's admin API must become ready within 15s"
+        "boot 1's admin API must become ready within 15s:\n{}",
+        child1.output()
     );
 
     // ── REAL ADMIN-API INSTALL: POST the packed auth-oidc plugin tarball to /api/v1/admin/plugins. ──
@@ -476,8 +539,7 @@ fn install_oidc_plugin_via_admin_api_and_authenticate() {
         .expect("the just-installed auth-oidc plugin appears in the auth catalog");
     assert_eq!(listed["valid"], true);
 
-    let _ = child1.kill();
-    let _ = child1.wait();
+    child1.kill();
 
     // ── BOOT 2: auth.chain: [oidc], over the SAME plugins dir the admin API wrote into above.
     // Restart-to-apply, mirroring store's own documented mechanism. ──
@@ -500,7 +562,7 @@ fn install_oidc_plugin_via_admin_api_and_authenticate() {
             plugins_dir.display(),
             cert_pem
                 .lines()
-                .map(|l| format!("            {l}"))
+                .map(|l| format!("        {l}"))
                 .collect::<Vec<_>>()
                 .join("\n"),
         ),
@@ -509,20 +571,20 @@ fn install_oidc_plugin_via_admin_api_and_authenticate() {
     let admin_addr2 = format!("127.0.0.1:{admin_port2}");
     let data_addr2 = format!("127.0.0.1:{data_port2}");
 
-    let mut child2 = std::process::Command::new(&busbar_bin)
-        .env("BUSBAR_CONFIG", &config2)
-        .env("BUSBAR_PROVIDERS", &providers)
-        .env("BUSBAR_ADMIN_TOKEN", ADMIN_TOKEN)
-        .env("MOCK_KEY", "unused-mock-provider-key")
-        .env("BUSBAR_STATE_FILE", "")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .expect("spawn boot 2 (auth.chain: [oidc], picking up the admin-API-installed tarball)");
+    let mut child2 = CapturedChild::spawn(
+        std::process::Command::new(&busbar_bin)
+            .env("BUSBAR_CONFIG", &config2)
+            .env("BUSBAR_PROVIDERS", &providers)
+            .env("BUSBAR_ADMIN_TOKEN", ADMIN_TOKEN)
+            .env("MOCK_KEY", "unused-mock-provider-key")
+            .env("BUSBAR_STATE_FILE", ""),
+        "boot 2 (auth.chain: [oidc], picking up the admin-API-installed tarball)",
+    );
     assert!(
         wait_for_admin_ready(&client, &admin_addr2, ADMIN_TOKEN, &mut child2),
         "boot 2's admin API must become ready within 15s (proves the oidc plugin loaded, not just \
-         that the process is alive, since a load failure is a boot-time die())"
+         that the process is alive, since a load failure is a boot-time die()):\n{}",
+        child2.output()
     );
 
     // ── THE REAL CALL: a genuine signed bearer JWT through the live data plane. ──
@@ -575,8 +637,7 @@ fn install_oidc_plugin_via_admin_api_and_authenticate() {
         "a token signed by the wrong key must be rejected by the live installed plugin"
     );
 
-    let _ = child2.kill();
-    let _ = child2.wait();
+    child2.kill();
     let _ = std::fs::remove_dir_all(&work);
 }
 
