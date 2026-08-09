@@ -5,9 +5,9 @@
 //! Connect JWT (ID or access token) a caller presents as its bearer credential and maps it to a
 //! [`busbar_api::Principal`]: verify the signature against the provider's JWKS, check `iss`/`aud`/
 //! `exp`/`nbf`, and read the configured role claim (`groups` by default, or `roles` for Entra
-//! app-roles) into the principal's ROLES. busbar's own `group_map:` / `auth.modules.oidc:` config
-//! then resolves those roles to governance grants and admin scope — the module asserts identity
-//! only, never policy.
+//! app-roles) into the principal's ROLES. busbar's own `auth.role_bindings.<provider>:` config then
+//! resolves those roles to governance grants and admin scope — the module asserts identity only,
+//! never policy.
 //!
 //! This crate is the reusable LOGIC (usable statically). The dynamic `cdylib` that exports the auth C
 //! ABI is the sibling `busbar-auth-oidc-plugin` crate.
@@ -73,8 +73,8 @@ const MAX_CACHE_TTL_SECS: i64 = 300;
 /// fine; it only needs to stay behind "now".
 const CLOCK_SANITY_FLOOR_UNIX: i64 = 1_767_225_600; // 2026-01-01T00:00:00Z
 
-/// The operator's `auth.modules.oidc.config` settings, deserialized from the JSON the engine passes to
-/// the plugin's `open`.
+/// The operator's `identity-providers.<name>.settings:` block, deserialized from the JSON the engine
+/// passes to the plugin's `open`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OidcConfig {

@@ -3,8 +3,9 @@
 
 //! The **OIDC auth module as a droppable busbar plugin** — a `cdylib` that exports the auth C ABI
 //! ([`busbar_plugin_abi::auth`]). Build it, drop the resulting `.so`/`.dll`/`.dylib` into the engine's
-//! plugins folder, add `oidc` to `auth.chain`, and configure `auth.modules.oidc.config`; the engine
-//! loads it in-process at boot over the auth ABI.
+//! plugins folder, define it once under `identity-providers:` (`module: oidc` plus its `settings:`),
+//! and reference that name from `auth.chain`; the engine loads it in-process at boot over the auth
+//! ABI.
 //!
 //! All the OIDC logic (JWKS, JWT verification on `ring`, claim policy) lives in the `busbar-auth-oidc`
 //! `lib` crate (which a custom build can also link statically). Here we only adapt the engine's JSON
