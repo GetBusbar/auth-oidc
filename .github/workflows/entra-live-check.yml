@@ -49,6 +49,10 @@ jobs:
         env:
           ENTRA_TENANT_ID: ${{ secrets.ENTRA_TENANT_ID }}
           ENTRA_CLIENT_ID: ${{ secrets.ENTRA_CLIENT_ID }}
+          # Optional: only set when the app registration is a CONFIDENTIAL client (i.e. "Allow
+          # public client flows" is off). Absent, the check sends no secret, which is what a public
+          # client requires.
+          ENTRA_CLIENT_SECRET: ${{ secrets.ENTRA_CLIENT_SECRET }}
           ENTRA_TEST_USERNAME: ${{ secrets.ENTRA_TEST_USERNAME }}
           ENTRA_TEST_PASSWORD: ${{ secrets.ENTRA_TEST_PASSWORD }}
         run: cargo run --example entra_live_check
