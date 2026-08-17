@@ -43,6 +43,14 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          # REQUIRED. Without `workspaces:` this action looks for ONE Cargo workspace at the
+          # checkout root, and nothing is checked out there: every checkout above uses `path:`.
+          # It logged "could not find Cargo.toml" and carried on WITHOUT failing, so this job
+          # rebuilt everything from scratch on every run while the log said the cache step
+          # succeeded. Each workspace this job actually builds must be named.
+          workspaces: |
+            auth-oidc
 
       - name: Real Entra ID token verification
         working-directory: auth-oidc
